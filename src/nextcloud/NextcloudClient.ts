@@ -40,16 +40,16 @@ export class NextcloudClient {
   async uploadFiles(files: string[]): Promise<string> {
     core.info('Preparing upload...')
     const spec = this.uploadSpec(files)
-    core.info('Zipping files...')
-    const zip = await this.zipFiles(spec)
-    try {
-      core.info('Uploading to Nextcloud...')
-      const filePath = await this.upload(zip)
-      core.info(`Remote file path: ${filePath}`)
-      return await this.shareFile(filePath)
-    } finally {
-      await fs.unlink(zip)
+    core.info('Uploading to Nextcloud...')
+    let filePath = "NONE"
+    for (const s of spec) {
+      filePath = await this.upload(s) // Inefficient
     }
+    // if (filePath !== "NONE") {
+    //   core.info(`Remote file path: ${filePath}`)
+    //   return await this.shareFile(filePath)
+    // }
+    return ""
   }
 
   private uploadSpec(files: string[]): FileSpec[] {
@@ -85,51 +85,16 @@ export class NextcloudClient {
     return specifications
   }
 
-  private async zipFiles(specs: FileSpec[]): Promise<string> {
-    const tempArtifactDir = path.join(os.tmpdir(), this.guid)
-    const artifactPath = path.join(tempArtifactDir, `artifact-${this.artifact}`)
-    await fs.mkdir(path.join(artifactPath, this.artifact), { recursive: true })
-    const copies = []
-    for (const spec of specs) {
-      const dstpath = path.join(artifactPath, spec.uploadPath)
-      const dstDir = path.dirname(dstpath)
-      if (!fsSync.existsSync(dstDir)) {
-        await fs.mkdir(dstDir, { recursive: true })
-      }
-
-      copies.push(fs.copyFile(spec.absolutePath, dstpath))
-    }
-
-    await Promise.all(copies)
-    core.info(`files: ${await fs.readdir(path.join(artifactPath, this.artifact))}`)
-
-    const archivePath = path.join(artifactPath, `${this.artifact}.zip`)
-    await this.zip(path.join(artifactPath, this.artifact), archivePath)
-
-    return archivePath
-  }
-
-  private async zip(dirpath: string, destpath: string) {
-    const archive = archiver.create('zip', { zlib: { level: 9 } })
-    const stream = archive.directory(dirpath, false).pipe(fsSync.createWriteStream(destpath))
-
-    await archive.finalize()
-
-    return await new Promise<void>((resolve, reject) => {
-      stream.on('error', e => reject(e)).on('close', () => resolve())
-    })
-  }
-
-  private async upload(file: string): Promise<string> {
-    const remoteFileDir = `/artifacts/${this.guid}`
+  private async upload(file: FileSpec): Promise<string> {
+    const remoteFileDir = `/Software` // Shouldn't be hardcoded
     if (!(await this.davClient.exists(remoteFileDir))) {
       await this.davClient.createDirectory(remoteFileDir, { recursive: true })
     }
 
-    const remoteFilePath = `${remoteFileDir}/${this.artifact}.zip`
-    core.debug(`Transferring file... (${file})`)
+    const remoteFilePath = `${remoteFileDir}/${file.uploadPath}`
+    core.debug(`Transferring file... (${file.uploadPath})`)
 
-    await this.davClient.putFileContents(remoteFilePath, await fs.readFile(file))
+    await this.davClient.putFileContents(remoteFilePath, await fs.readFile(file.absolutePath))
 
     return remoteFilePath
   }
